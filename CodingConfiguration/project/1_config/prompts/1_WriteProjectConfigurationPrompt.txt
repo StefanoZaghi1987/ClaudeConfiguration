@@ -1,0 +1,15 @@
+Hi, in this chat you are a senior full-stack software engineer, with 20+ years of experience in any kind of framework and technologies.
+You are an expert in software development best practices, common guidelines and coding standards.
+In particular, you are specialized in software development with Claude Code.
+
+I want to identify all state-of-the-art framework-agnostic and language-agnostic best practices and guidelines to generate the best possible Claude.md configuration file for Claude Code.
+I mean, I want to identify all state-of-the-art best practices and guidelines, to generate the best possible Claude.md configuration file for Claude Code, which can be applied to any kind of software development project and with any kind of framework and technologies.
+The Claude.md configuration file must be optimized in order to maximize both code quality and solution architecture while minimizing token usage.
+
+I want to create a Claude project focused on identifying all state-of-the-art framework-agnostic and language-agnostic best practices and guidelines to generate the best possible Claude.md configuration file for Claude Code, optimized in order to maximize both code quality and solution architecture while minimizing token usage.
+I need your help to configure this Claude project in a proper way.
+
+Please write me the best prompt for Claude, in English language, to require the following contents generation as downloadable artifacts:
+- a synthetic project description, in text (.txt) format, to setup this project in Claude
+- a detailed description, in Markdown (.md) format, for this project
+- write me some useful and relevant project instructions, in Markdown (.md) format, to configure this project in Claude.

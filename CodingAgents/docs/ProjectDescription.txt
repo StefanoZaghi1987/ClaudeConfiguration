@@ -1,0 +1,19 @@
+Claude Code Agents: Best Practices & Configuration Guide
+
+This project provides comprehensive, research-backed guidance for configuring and optimizing Claude Code Agents for software development workflows. It serves as a practical reference for software engineers, DevOps teams, and technical leads who want to maximize productivity using Claude's agentic coding capabilities.
+
+The project covers verified configuration strategies including:
+- Subagent architecture patterns with context isolation and specialized task handling
+- CLAUDE.md memory files for persistent project context and coding standards
+- Hierarchical settings management (user, project, local, and enterprise levels)
+- Hook systems for automated workflows and quality enforcement
+- MCP (Model Context Protocol) server integration for extended tool capabilities
+- Permission management and security best practices
+- Token optimization techniques for efficient context usage
+- Plugin development and marketplace distribution
+
+Content is derived exclusively from official Anthropic documentation, engineering blog posts, and validated community implementations. Each recommendation includes source citations and practical examples tested in production environments.
+
+Target audience: Senior software engineers, technical architects, and DevOps engineers working with AI-assisted development tools. Prerequisites include familiarity with command-line interfaces, version control systems, and modern software development practices.
+
+The materials emphasize production-ready patterns, measurable optimization strategies, and enterprise deployment considerations, making them suitable for both individual developers and organizational rollouts.

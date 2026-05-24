@@ -1,0 +1,107 @@
+Hi, in this chat you are a senior full-stack software engineer, with 20+ years of experience in any kind of framework and technologies.
+You are an expert in software development best practices, common guidelines and coding standards.
+In particular, you are specialized in software development with Claude Code and in Claude Code Agents configuration.
+
+I want to identify all state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development.
+
+Please write me the best prompt for Claude, in English language, to operate and complete the following tasks sequentially.
+
+1. Project Documentation Analysis & Understanding
+1.1 read and understand all uploaded project documentation
+1.2 before proceeding with the following task, ensure to have read and understood ALL uploaded documents.
+
+2. Claude Code Agents configuration Q&A: write a detailed and exhaustive report document, in Markdown (.md) format, with the answers to each of the following questions. All these questions are related to state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development.
+The output must be generated as a downloadable Markdown (.md) artifact.
+2.1 Activation Triggers
+    - explain all state-of-the-art best practices and guidelines to configure Claude Code Agents Activation Triggers
+    - how can I assure that any single agent will be triggered in the best way and when only truly needed?
+    - how can I assure that for any single task will be called the best candidate agent?
+    - how can I configure the agents in order to avoid overlapping responsibilities?
+2.2 Model Selection
+    - explain all state-of-the-art best practices and guidelines to identify the best model for any single Claude Code Agent, given its role and operational context
+2.3 Tool Permissions
+    - explain all state-of-the-art best practices and guidelines to identify the right tool permissions for any single Claude Code Agent, given its role and operational context
+2.4 Configuration options
+    - explain all state-of-the-art fields, information and configuration options which can be specified in a Claude Code Agent Markdown (.md) configuration file
+    - explain all state-of-the-art best practices and guidelines to configure Claude Code Agents through a Markdown (.md) configuration file
+    - would it be better to configure a Claude Code Agent using Claude Code inline tools, or by generating its Markdown (.md) configuration file with an optimized prompt?
+2.5 Integration with Claude Code configuration
+    - do I need to reference Claude Code Agents in the Claude.md configuration file for Claude Code and / or in its cross-referenced files? If so, explain all state-of-the-art best practices and guidelines to add references to Claude Code Agents in Claude Code configuration files
+    - do I need to configure Claude Code Agents adding references to the Claude.md configuration file for Claude Code and / or to its cross-referenced files? If so, explain all state-of-the-art best practices and guidelines to add references to Claude Code configuration files in Claude Code Agents configuration
+2.6 Reference to software development best practices and guidelines
+    - do I need to configure Claude Code Agents adding references to common software development best practices and guidelines? If so, would it be better to directly add key principles details, to reference some documentation, or adopting an hybrid approach (key principles + references)? Working with a Claude Code Agentic Team, do I need to do this for any single agent?
+    - do I need to configure Claude Code Agents adding references to framework-specific documentation, patterns and best-practices? If so, would it be better to directly add key principles and patterns, to reference some documentation, or adopting an hybrid approach (key principles + patterns + references)? Working with a Claude Code Agentic Team, do I need to do this for any single agent?
+2.7 Context Management
+    - explain all state-of-the-art best practices and guidelines to maximize agents effectiveness and code quality while minimizing token usage
+    - explain all state-of-the-art token optimization strategies for software development with Claude Code Agents
+    - given a Claude Code Agent role and operational context, what would be the best context loading strategy?
+    - what is the best way to assure that any single agent will load context in the best possible way?
+    - how can I assure that each single agent will load its own context in the best possible way?
+    - do I need to explicitly provide context for any single agent?
+    - is there a way to avoid context duplication across different agents?
+2.8 Workflow Patterns
+    - explain all state-of-the-art workflow patterns for software development with Claude Code Agents
+    - what is the best agent workflow pattern to maximize agents effectiveness and code quality while minimizing token usage?
+2.9 Agentic Team Structure
+    - explain all state-of-the-art best practices and guidelines to identify and configure the best Claude Code Agentic Team structure for any kind of software development project and for any kind of framework and technologies
+    - explain all state-of-the-art best practices and guidelines to identify and configure, given a specific software development project with a specific technology stack, the best Claude Code Agentic Team structure
+    - what would be the best state-of-the-art Claude Code Agentic Team structure, by a framework-agnostic and language-agnostic perspective?
+    - what would be the best number of different Claude Code Agents to be configured?
+2.10 Framework-Agnostic vs Framework-Specific Agents vs Hybrid approach
+    - would it be better to configure framework-agnostic (generic) agents, or framework-specialized agents, or adopting an hybrid approach?
+    - in a totally framework-agnostic approach, what would be the best Claude Code Agentic Team structure? What would be the best number of different Claude Code Agents to be configured?
+    - in a totally framework-specific approach, what would be the best Claude Code Agentic Team structure? What would be the best number of different Claude Code Agents to be configured?
+    - adopting an hybrid approach (both framework-agnostic and framework-specialized agents), what would be the best Claude Code Agentic Team structure? What would be the best number of different Claude Code Agents to be configured?
+    - adopting an hybrid approach (both framework-agnostic and framework-specialized agents), how can I configure the agents in order to avoid overlapping responsibilities? How will this agents work together?
+2.11 Claude Code Agents Orchestration
+    - explain all state-of-the-art best practices and guidelines for Claude Code Agents orchestration
+    - explain if and how are Claude Code Agents capable of interacting between themselves
+    - explain if and how are Claude Code Agents capable of delegate tasks between themselves and / or with the main orchestrator agent
+    - explain if and how are Claude Code Agents capable of sharing information between themselves and / or with the main orchestrator agent
+    - explain if and how are Claude Code Agents capable of sharing context between themselves and / or with the main orchestrator agent
+    - explain if and how is it possible to configure context sharing, inheritance and dependencies for Claude Code Agents
+2.12 Claude Code Configuration and Project Documentation maintenance
+    - explain all state-of-the-art best practices and guidelines to keep Claude Code configuration (Claude.md configuration file and its cross-referenced files) updated when working with Claude Code Agents
+    - explain all state-of-the-art best practices and guidelines to keep project documentation updated when working with Claude Code Agents
+    - which agents should be able to update Claude Code configuration (Claude.md configuration file and its cross-referenced files)?
+    - must Claude Code configuration (Claude.md configuration file and its cross-referenced files) be kept updated by the main orchestrator agent, or by specialized agents?
+2.13 Anti-Patterns to avoid
+    - explain all state-of-the-art anti-patterns to avoid about Claude Code Agents configuration and management
+
+Write this prompt with the following additional strict requirements.
+
+A. Critical execution order
+The tasks execution order is critical, so their order must be followed sequentially.
+
+B. Don't ignore any task
+You must operate and complete every single task.
+Please remember that the tasks order must be followed sequentially.
+
+C. Don't ignore any question
+You must give an answer to any single question.
+
+D. Output task verification
+- after completing each task, verify your output before moving to the next one
+- do not proceed to the next task until the current one passes verification
+- if verification fails, revise the current task before continuing
+- provide a final summary confirming all tasks were completed successfully.
+
+E. Request confirmation: ask for acknowledgment
+Ask clarifying questions if any requirement is unclear.
+
+F. Don't use assumptions
+- verify each statement using certified or otherwise reliable information sources
+- all analysis must be grounded on certified or otherwise reliable information sources examination.
+
+G. Output report depth
+The output report document must be generated following these instructions:
+- any relevant theme and aspect must be explained in a dedicated chapter or section
+- write all output information in a clear and understandable way
+- avoid ambiguities. Divide concepts in different statements, whenever necessary.
+
+H. Filesystem access: if any issues are encountered while trying to have filesystem access
+- STOP immediately
+- report the exact error message
+- try alternative approaches using all available tools
+- do NOT proceed with assumptions or theoretical analysis
+- ask for help if needed.
