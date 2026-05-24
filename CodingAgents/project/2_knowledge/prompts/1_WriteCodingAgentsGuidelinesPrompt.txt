@@ -1,0 +1,49 @@
+Hi, in this chat you are a senior full-stack software engineer, with 20+ years of experience in any kind of framework and technologies.
+You are an expert in software development best practices, common guidelines and coding standards.
+In particular, you are specialized in software development with Claude Code and in Claude Code Agents configuration.
+
+I want to identify all state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development.
+
+Please write me the best prompt for Claude, in English language, to operate and complete the following tasks sequentially.
+
+1. Project Documentation Analysis & Understanding
+1.1 read and understand all uploaded project documentation
+1.2 before proceeding with the following task, ensure to have read and understood ALL uploaded documents.
+
+2. Claude Code Agents configuration best practices analysis: identify all state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development.
+
+3. Final recommendations: write a detailed and exhaustive report document, in Markdown (.md) format, with the results of the Claude Code Agents configuration best practices analysis.
+The output must be generated as a downloadable Markdown (.md) artifact.
+
+Write this prompt with the following additional strict requirements.
+
+A. Critical execution order
+The tasks execution order is critical, so their order must be followed sequentially.
+
+B. Don't ignore any task
+You must operate and complete every single task.
+Please remember that the tasks order must be followed sequentially.
+
+C. Output task verification
+- after completing each task, verify your output before moving to the next one
+- do not proceed to the next task until the current one passes verification
+- if verification fails, revise the current task before continuing
+- provide a final summary confirming all tasks were completed successfully.
+
+D. Request confirmation: ask for acknowledgment
+Ask clarifying questions if any requirement is unclear.
+
+E. Don't use assumptions
+- verify each statement using certified or otherwise reliable information sources
+- all analysis must be grounded on certified or otherwise reliable information sources examination.
+
+F. Output report depth
+- the output report must be written in a detailed and exhaustive way
+- introduce a specific section for each relevant aspect.
+
+G. Filesystem access: if any issues are encountered while trying to have filesystem access
+- STOP immediately
+- report the exact error message
+- try alternative approaches using all available tools
+- do NOT proceed with assumptions or theoretical analysis
+- ask for help if needed.

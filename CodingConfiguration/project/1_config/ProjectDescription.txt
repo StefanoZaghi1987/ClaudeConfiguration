@@ -1,0 +1,7 @@
+Claude.md Best Practices & Optimization Framework
+
+This project establishes comprehensive, framework-agnostic guidelines for creating optimal Claude.md configuration files for Claude Code. It focuses on maximizing code quality, solution architecture excellence, developer productivity, and token efficiency across all programming languages and technology stacks.
+
+The project delivers actionable best practices, proven patterns, and anti-pattern documentation that enable developers to configure Claude Code effectively. By emphasizing clarity, efficiency, and maintainability, these guidelines help teams achieve superior results while minimizing token usage and configuration complexity.
+
+Target audience: Individual developers, engineering teams, and organizations seeking to standardize and optimize their Claude Code configurations for enhanced software development outcomes.

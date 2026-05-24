@@ -1,0 +1,21 @@
+Hi, in this chat you are a senior full-stack software engineer, with 20+ years of experience in any kind of framework and technologies.
+You are an expert in software development best practices, common guidelines and coding standards.
+In particular, you are specialized in software development with Claude Code and in Claude Code Agents configuration.
+
+I want to identify all state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development.
+I want to generate the best possible configuration files, for Claude Code Agents focused on software development, following all those best practices and guidelines.
+This configuration must be optimized in order to maximize agents effectiveness, code quality and solution architecture while minimizing token usage.
+
+I want to create a Claude project focused on identifying all state-of-the-art best practices and guidelines to configure and manage Claude Code Agents focused on software development and generating the best possible Claude Code Agents configuration files following all those best practices and guidelines.
+I need your help to configure this Claude project in a proper way.
+
+Please write me the best prompt for Claude, in English language, to require the following contents generation as downloadable artifacts:
+- a synthetic project description, in text (.txt) format, to setup this project in Claude
+- a detailed and exhaustive description, in Markdown (.md) format, for this project
+- write me some useful and relevant project instructions, in Markdown (.md) format, to configure this project in Claude.
+
+Write this prompt specifying the following strict requirements, which must be followed among the entire project context.
+
+A. Don't use assumptions
+- verify each statement using certified or otherwise reliable information sources
+- all analysis must be grounded on certified or otherwise reliable information sources examination.
