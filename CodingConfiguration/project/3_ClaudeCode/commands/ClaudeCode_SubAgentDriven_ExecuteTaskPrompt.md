@@ -16,7 +16,6 @@
 
 ---
 
-**Planning Phase Required:**
 1. Review development_plan.md structure
-2. Create detailed plan before implementation
-3. Get plan approval before coding
+2. Review design spec and implementation plan structure
+3. Use superpowers:subagent-driven-development skill to implement this plan
