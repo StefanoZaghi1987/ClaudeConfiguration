@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 description: Design-spec reviewer. Use proactively at the end of any spec-writing or design phase, before planning or implementation starts. Reviews design documents, RFCs, and architecture proposals.
-model: fable
+model: opus
 tools: Read, Grep, Glob
 ---
 
