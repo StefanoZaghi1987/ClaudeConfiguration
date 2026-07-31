@@ -1,7 +1,7 @@
 ---
 name: implementation-plan-reviewer
 description: Implementation-plan reviewer. Use proactively after an implementation plan is written and before execution begins. Reviews step sequencing, completeness, and risk of coding plans.
-model: fable
+model: opus
 tools: Read, Grep, Glob
 ---
 

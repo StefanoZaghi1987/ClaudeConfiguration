@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Code reviewer. Use proactively at the end of an implementation phase, after code is written or modified and before the work is declared done.
-model: fable
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
