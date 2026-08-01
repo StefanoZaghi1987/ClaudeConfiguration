@@ -56,6 +56,41 @@ Only 6 of the plugin's 14 skills are vendored. The other 8 — including
 `verification-before-completion`, `requesting-code-review` and `using-superpowers` — were
 deliberately dropped, not overlooked. Do not vendor them back in to "fix" L3.
 
+### `claude-code-setup`, `skill-creator`, `mcp-server-dev` — `claude-plugins-official/<plugin>/<v>/skills/<skill>/` (plugins disabled 2026-08-01)
+
+Vendored **with their `references/` directories**, unlike every group above — the earlier vendoring
+copied only `SKILL.md`, which is why 17 dangling `references/*.md` pointers exist across the older
+skills. Do not repeat that: for this group, `diff -rq` the whole directory, not just `SKILL.md`.
+
+| Skill | Upstream plugin | Files | Note |
+|---|---|---|---|
+| `claude-automation-recommender` | `claude-code-setup` | 6 | 5 reference files |
+| `skill-creator` | `skill-creator` | 18 | `agents/` ×3, `scripts/` ×9 (Python), `eval-viewer/`, `assets/`, 1 reference |
+| `build-mcp-server` | `mcp-server-dev` | 9 | 8 reference files |
+| `build-mcp-app` | `mcp-server-dev` | 7 | 6 reference files; local edit **L8** |
+| `build-mcpb` | `mcp-server-dev` | 3 | 2 reference files; local edit **L8** |
+
+All five carry `disable-model-invocation: true`, added at vendor time and **not present upstream**.
+Re-apply it after any re-vendor: without it each one costs its description in every turn, which is
+the reason the plugins were disabled in the first place.
+
+**The three `build-mcp-*` skills are one unit — never vendor a subset.** They cross-reference each
+other with sibling-relative paths (`../build-mcp-server/references/elicitation.md` in
+`build-mcp-app/SKILL.md`). That path resolves only while all three sit as siblings under
+`~/.claude/skills/`. Vendoring one alone breaks it silently.
+
+Upstream version to read: the `installPath` recorded in `installed_plugins.json`, which for
+`mcp-server-dev` is the `unknown` directory. Several sha-named sibling directories hold older
+copies of the same plugin; ignore them.
+
+### `code-review` — a command, not a skill
+
+The `code-review` plugin ships no skill. Its `commands/code-review.md` was copied to
+`~/.claude/commands/code-review.md` with `disable-model-invocation` flipped from `false` to `true`.
+It is not part of the skills inventory and `diff -rq` over `~/.claude/skills` will never see it —
+check it by hand, or leave it alone: it is a PR-review workflow over `gh`, and the `code-reviewer`
+subagent covers the same ground for a working diff.
+
 ### `ponytail` — deliberately not vendored, plugin kept **enabled**
 
 `ponytail@ponytail` is the one upstream plugin left enabled, so nothing from it is
@@ -94,6 +129,46 @@ reads there as an expanded literal path and an intact file looks divergent.
   `requesting-code-review/code-reviewer.md`, and the 4 links to it were repointed from
   `../requesting-code-review/` to `./`. The skill dispatches its final reviewer with this
   file, so it is a functional dependency, not a citation. Re-copy it on any re-vendor.
+- **L8** — `build-mcp-app/references/widget-templates.md` and
+  `build-mcpb/references/local-security.md`: three pointers were changed from
+  `../build-mcp-server/…` to `../../build-mcp-server/…`. **These were broken upstream**, not by
+  vendoring — written as if resolving from the skill root while sitting inside `references/`. A
+  re-vendor reintroduces the upstream bug. Confirm with
+  `grep -rn '\.\./build-mcp-server/' ~/.claude/skills/build-mcp-app/references ~/.claude/skills/build-mcpb/references`
+  returning nothing. The same string in `build-mcp-app/SKILL.md` is correct and must be left alone.
+- **L9 — the invocation regime is local state, never upstream state.** Fourteen skills carry
+  `disable-model-invocation: true` that their upstream does not have. The line is a **functional
+  dependency, not a preference**: without it the skill pays its description in every turn, and the
+  trigger collisions that `~/.claude/CLAUDE.md` exists to resolve come back — including a four-way
+  collision on the first message of a new feature between `interview-me`, `idea-refine`,
+  `wayfinder` and `grilling`.
+
+  Nine of them were demoted from an upstream that is model-invoked, on 2026-08-01:
+
+  `brainstorming` · `code-simplification` · `context-engineering` ·
+  `dispatching-parallel-agents` · `doubt-driven-development` · `idea-refine` ·
+  `incremental-implementation` · `interview-me` · `systematic-debugging`
+
+  The other five are the vendored plugin group above: `claude-automation-recommender` ·
+  `skill-creator` · `build-mcp-server` · `build-mcp-app` · `build-mcpb`.
+
+  On `idea-refine` and `systematic-debugging` this edit sits **alongside** L1 and L3 respectively;
+  a diff confined to L9 plus those is still `identical`.
+
+  Do not maintain this list by hand — it goes stale the moment a skill is promoted or demoted.
+  Reconstruct it before any re-vendor, and verify it afterwards, with the regime itself as the
+  source of truth:
+
+  ```
+  # every locally slash-only skill whose upstream is not
+  for s in ~/.claude/skills/*/SKILL.md; do
+    grep -ql '^disable-model-invocation: *true' "$s" && echo "$(basename $(dirname $s))"
+  done
+  ```
+
+  A re-vendor that drops the line reports success while silently reverting a deliberate decision:
+  `cp` exits 0, the skill works, and only the token bill and the non-deterministic trigger show it.
+  This is the edit most likely to be lost, because it is one line and looks like metadata.
 
 ## Procedure — detect
 
@@ -108,8 +183,14 @@ reads there as an expanded literal path and an intact file looks divergent.
    missing upstream as "no drift".
 4. Report one table — skill, status, what changed — and stop. Classify every skill as
    **auto-appliable** (`upstream changed`, or `both changed` where the local side is only
-   its protected edits) or **blocked** (`both changed` with an undocumented local edit, `upstream
-   missing`). Show the undocumented local diff inline for each blocked skill.
+   its protected edits), **no action** (`identical`, or `local edits` — upstream has not moved, so
+   there is nothing to re-vendor), or **blocked** (`both changed` with an undocumented local edit,
+   `upstream missing`). Show the undocumented local diff inline for each blocked skill.
+
+   A skill sitting in **no action** because of `local edits` is not settled, only quiet: the moment
+   upstream moves it becomes `both changed`, and whether it lands in auto-appliable or blocked
+   depends entirely on whether its local edit is documented above. Check that the edit is listed
+   before moving on, rather than when the plugin next updates.
 
 ## Procedure — apply
 
