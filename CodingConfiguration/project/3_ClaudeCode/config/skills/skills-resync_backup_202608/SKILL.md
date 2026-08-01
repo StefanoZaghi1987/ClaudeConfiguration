@@ -74,10 +74,7 @@ Not vendored: `consolidate-comments`, `consolidate-specs`, `model-config-sync`,
 
 ## Protected local edits
 
-Re-apply these after any re-vendor; verify each is present before reporting success. Verify
-by reading the file on disk, never by comparing against this skill's text as it arrives in
-context — the harness expands `${...}` before injecting it, so L1's `${CLAUDE_SKILL_DIR}`
-reads there as an expanded literal path and an intact file looks divergent.
+Re-apply these after any re-vendor; verify each is present before reporting success.
 
 - **L1** — `idea-refine/SKILL.md`: script path uses `${CLAUDE_SKILL_DIR}`, not a relative
   `skills/...` path, so it resolves at user scope.
