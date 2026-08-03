@@ -7,28 +7,34 @@ allowed-tools: Bash, Read, Glob, Grep, Edit, Write
 
 These skills were copied out of their plugins so they survive the plugin being disabled, updated
 or swept. They receive no marketplace updates. `scripts/resync.sh` owns every mechanical step —
-resolving upstream, classifying drift, swapping the directory, restoring the invocation regime,
-rebasing the baseline, deleting its own leftovers. This document owns the judgement, which is one
-question per drifted skill: **is that diff a protected local edit, or is it upstream moving?**
+resolving upstream, classifying drift, swapping the directory, replaying the protected local edits,
+restoring the invocation regime, rebasing the baseline, deleting its own leftovers.
+
+This document owns the judgement, and there is now exactly one occasion for it: **a patch that
+rejects**, meaning upstream rewrote a line a local edit owns. Everything else is decided by the
+script.
 
 Never write before the user confirms.
 
-## Two sources of truth
+## Three sources of truth
 
 `scripts/inventory.tsv` — which plugin each skill came from, its subpath, and the commit it was
 vendored at. The script resolves the plugin root from `installed_plugins.json`'s `installPath`, so
 no version directory is recorded anywhere and a plugin update simply moves the path under it. The
 baseline column is rewritten by `--apply`; hand-editing it makes `--check` lie in both directions.
 
-This document — which protected edit each skill carries, and why a skill is or is not in the
-inventory. `--check` output cannot be read without it.
+`scripts/patches/<skill>.patch` — the protected local edits themselves, as a patch `--apply` replays
+onto each fresh vendor. Generated only by `--snapshot`, never by hand. This is what makes a
+re-vendor of an edited skill mechanical instead of a hand step nothing could confirm had happened.
+
+This document — *why* each protected edit exists, and why a skill is or is not in the inventory.
+`--check` output cannot be read without it.
 
 ## Protected local edits
 
-Re-apply L1–L5 after any re-vendor and verify each on disk. Verify **by reading the file**, never
-by comparing against this document as it arrives in context: the harness expands `${...}` before
-injecting it, so L1's `${CLAUDE_SKILL_DIR}` reads there as an expanded literal path and an intact
-file looks divergent.
+The patches carry these across a re-vendor and `--apply` verifies the replay, so nothing below is a
+checklist to work through by hand. It is the record of what each edit is *for* — needed when a patch
+rejects and you have to decide what the edit should become against the rewritten upstream.
 
 - **L1** — `idea-refine/SKILL.md`: the script path uses `${CLAUDE_SKILL_DIR}`, not a relative
   `skills/...` path, so it resolves at user scope.
@@ -37,39 +43,31 @@ file looks divergent.
 - **L3** — `executing-plans`, `subagent-driven-development`, `systematic-debugging`, `writing-plans`
   carry no `superpowers:` prefixes and no `../<skill>/` paths. Upstream, 16 references pointed at
   sibling plugin skills; 5 resolved to skills vendored here and were reduced to bare names, and 11
-  pointed at the 8 skills that were dropped and were rewritten into plain instructions. A re-vendor
-  reintroduces all 16 as dangling references — several tagged `REQUIRED SUB-SKILL`, so they are
-  executable, not prose. Re-apply by re-running the rewrite, then confirm
-  `grep -rn 'superpowers:\|\.\./[a-z-]*/'` over the four returns nothing.
+  pointed at the 8 skills that were dropped and were rewritten into plain instructions. Left
+  unpatched a re-vendor reintroduces all 16 as dangling references — several tagged
+  `REQUIRED SUB-SKILL`, so they are executable, not prose.
 - **L4** — `subagent-driven-development/code-reviewer.md` is a vendored copy of
   `requesting-code-review/code-reviewer.md`, and the 4 links to it were repointed from
   `../requesting-code-review/` to `./`. The skill dispatches its final reviewer with this file, so
-  it is a functional dependency, not a citation. Re-copy it on any re-vendor.
+  it is a functional dependency, not a citation — the patch carries the whole file, not just the
+  links.
 - **L5** — `build-mcp-app/references/widget-templates.md` and `build-mcpb/references/local-security.md`:
   three pointers were changed from `../build-mcp-server/…` to `../../build-mcp-server/…`. **These
   were broken upstream**, not by vendoring — written as if resolving from the skill root while
-  sitting inside `references/`. A re-vendor reintroduces the upstream bug. Confirm with a
-  **lookbehind**, which the obvious pattern gets wrong: `\.\./build-mcp-server/` is a substring of
-  the corrected `../../build-mcp-server/`, so it matches the fix itself and reports L5 as lost every
-  time.
-
-  ```
-  grep -rnP '(?<!\.\./)\.\./build-mcp-server/' \
-    ~/.claude/skills/build-mcp-app/references ~/.claude/skills/build-mcpb/references
-  ```
-
-  Nothing returned means intact; there should be exactly three `../../build-mcp-server/` pointers
-  across the two files. The same string in `build-mcp-app/SKILL.md` is correct — leave it alone.
+  sitting inside `references/`. So this patch is a standing bug fix that upstream may land itself
+  one day; if it rejects because the path is already correct there, drop the edit rather than
+  restore it. The same string in `build-mcp-app/SKILL.md` is correct — leave it alone.
 - **L6 — the invocation regime is local state, never upstream state.** `disable-model-invocation:
   true` is a **functional dependency, not a preference**: without it the skill pays its description
   in every turn, and the trigger collisions `~/.claude/CLAUDE.md` exists to resolve come back —
   `idea-refine` and `brainstorming` both firing on a formless idea, on top of `interview-me` and
   `grilling`, which are model-invoked by design and already overlap on "stress-test my thinking".
 
-  **The script owns this one.** `--apply` records the line before the swap and re-inserts it inside
-  the new frontmatter afterwards, and every diff ignores it, so a skill whose only local change is
-  L6 reads as `identical`. Nothing here is maintained by hand, and a promotion or demotion needs no
-  bookkeeping — the live file is the source of truth.
+  **The script owns this one, and only this one path owns it.** `--apply` records the line before
+  the swap and re-inserts it inside the new frontmatter afterwards; `--snapshot` strips it from
+  every patch so the two mechanisms cannot both insert it and collide. Every diff ignores it, so a
+  skill whose only local change is L6 reads as `identical`. Nothing here is maintained by hand, and
+  a promotion or demotion needs no bookkeeping — the live file is the source of truth.
 
   Because the diff ignores the line, `--check` reports it as its own `REGIME` column instead. That
   column is the only thing that catches an L6 lost out of band, so reconcile the count:
@@ -122,45 +120,51 @@ pointers. They are inert and accepted. Flag one only if it becomes an executable
 
 ## Procedure
 
-1. **`bash scripts/resync.sh --check`.** Every row is decided by two inputs jointly — the baseline
+1. **`bash scripts/resync.sh --check`.** Every row is decided by three inputs jointly — the baseline
    sha against the plugin's current `gitCommitSha` says whether upstream moved, the diff says
-   whether anything beyond L6 is present. It ends in four buckets:
+   whether anything beyond L6 is present, and the presence of a current patch says whether that
+   diff can be replayed. It ends in four buckets:
 
    | Bucket | Meaning | Action |
    |---|---|---|
-   | `identical` | upstream at baseline, no local diff | none |
-   | `REVIEW` | local diff, upstream **not** moved | step 2 |
-   | `APPLIABLE` | upstream moved, no local diff | steps 3–4 |
-   | `BLOCKED` | upstream moved **onto** a local diff, or upstream gone | by hand, one at a time |
+   | `identical` / `local-only` | no drift, or a local edit with a current patch | none |
+   | `REVIEW` | a local edit that is `unsnapshotted` or `patch-stale` | step 2 |
+   | `APPLIABLE` | upstream moved; any local edit has a patch to replay | steps 3–4 |
+   | `BLOCKED` | upstream moved onto an **uncaptured** edit, or upstream gone | by hand, one at a time |
 
-   Never infer a bucket from diff size: a large diff on an unmoved sha is still a local edit, and a
-   small one on a moved sha is still an upstream change.
+   `local-only` with a current patch is silent and healthy — the edit is captured, so a later
+   re-vendor replays it. Never infer a bucket from diff size: a large diff on an unmoved sha is
+   still a local edit, and a small one on a moved sha is still an upstream change.
 2. For each `REVIEW` row run `--diff <skill>` and check the diff against L1–L5 above. Confined to
-   them, it is healthy and there is nothing to do — an unmoved upstream leaves nothing to apply.
-   Anything else is an **undocumented local edit**: report it inline and document it as a new L-flag
-   in the same pass, so it can never be silently clobbered by a later re-vendor.
+   them, run **`--snapshot <skill>`** to capture it and the row goes quiet. Anything else is an
+   **undocumented local edit**: report it inline and document it as a new L-flag in the same pass,
+   then snapshot it. An unsnapshotted edit is the one thing a re-vendor destroys silently.
 3. **Ask once, for the whole `APPLIABLE` set.** List the names and ask to re-vendor them all. Accept
    a subset if the user names one. `BLOCKED` skills are never included.
-4. On confirmation, **`bash scripts/resync.sh --apply <skill> …`**. It stages from upstream, verifies
-   the staged copy is byte-identical, backs the live directory up inside a `mktemp -d`, swaps
-   wholesale — a merge would leave behind stale files that an upstream deletion should have removed,
-   and that no later diff would catch — restores L6, rebases the baseline in the same pass, and
-   sweeps every leftover. Nothing under `~/.claude/skills` is touched until a verified copy exists,
-   so a failed copy cannot leave a skill half-written, and the backup is gone on success, failure and
-   interrupt alike.
-5. Re-apply L1–L5 by hand for every written skill — the script deliberately does not, because L3's
-   reference rewrite is a judgement call. Then re-run `--check` and expect `identical` or `REVIEW`
-   with a diff confined to those edits. Do not report success from the fact that `--apply` exited 0.
-6. Cleanup needs no step: `--apply` already ran `--clean`. It removes its own `mktemp -d` work and
-   backup directories, any `SKILL.md.regime` staging file, `/skills-resync-backup` at the Git Bash
-   mount root left by an older copy of this skill, **and** the marketplace clones the plugin
-   installer orphans at `~/.claude/plugins/cache/temp_git_*`. Orphans younger than an hour are kept
-   and reported instead — a concurrent plugin install works inside one, and nothing here can tell a
-   live clone from a corpse by name. Override with `ORPHAN_MIN_AGE` on a machine known to be idle.
-   Run `--clean --dry-run` on its own to size the leftovers without a re-vendor.
-7. Report what was written, what was skipped, and what is still blocked.
+4. On confirmation, **`bash scripts/resync.sh --apply <skill> …`** runs the rest unattended. It
+   stages from upstream, verifies the staged copy is byte-identical, backs the live directory up
+   inside a `mktemp -d`, swaps wholesale — a merge would leave behind stale files that an upstream
+   deletion should have removed, and that no later diff would catch — restores L6, replays the
+   skill's patch, rebases the baseline, and sweeps every leftover. Nothing under `~/.claude/skills`
+   is touched until a verified copy exists, and a skill whose patch rejects is **rolled back whole**
+   and keeps its old baseline, so a partial re-vendor is not a state this can reach.
+5. Re-run `--check`. Expect `identical` or `local-only`. Do not report success from the fact that
+   `--apply` exited 0.
+6. For each rolled-back skill, reconcile by hand — this is the judgement the patches exist to
+   isolate. Read the rejected hunk against the rewritten upstream, decide what the edit becomes
+   (L5 may simply be obsolete), apply it to the live copy, then `--snapshot` it and `--apply` again.
+7. Cleanup needs no step: `--apply` already ran `--clean`. It removes its own `mktemp -d` work and
+   backup directories, any `SKILL.md.regime` staging file, any `.rej`/`.orig` a rejected patch left,
+   `/skills-resync-backup` at the Git Bash mount root left by an older copy of this skill, **and**
+   the marketplace clones the plugin installer orphans at `~/.claude/plugins/cache/temp_git_*`.
+   Orphans younger than an hour are kept and reported instead — a concurrent plugin install works
+   inside one, and nothing here can tell a live clone from a corpse by name. Override with
+   `ORPHAN_MIN_AGE` on a machine known to be idle. Run `--clean --dry-run` on its own to size the
+   leftovers without a re-vendor.
+8. Report what was written, what was skipped, and what is still blocked.
 
-`--self-test` exercises the replace, stale-file, missing-upstream, regime-restore and baseline-rebase
-paths in a scratch directory, touching nothing real. Run it after editing the script.
+`--self-test` exercises the replace, stale-file, missing-upstream, regime-restore, patch-replay,
+reject-rollback and baseline-rebase paths in a scratch directory, touching nothing real. Run it
+after editing the script.
 
 Recommended cadence: monthly, or when a skill behaves unexpectedly.
