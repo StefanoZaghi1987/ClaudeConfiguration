@@ -3,17 +3,21 @@
 # Judgement stays in SKILL.md - which protected edits (L1-L6) a skill carries, and whether a
 # remaining diff is one of them. Everything this script does is decidable without reading prose.
 #
-# Usage: resync.sh --check                      classify every skill in inventory.tsv
+# Usage: resync.sh --refresh                    pull marketplaces, mirror url-pinned plugins
+#        resync.sh --check                      classify every skill in inventory.tsv
 #        resync.sh --diff <skill>               full diff for one skill
 #        resync.sh --snapshot <skill> [...]     record the skill's local edits as a replayable patch
-#        resync.sh --apply <skill> [<skill>...] re-vendor, restore regime + local patch, rebase shas
+#        resync.sh --apply <skill> [<skill>...] re-vendor, restore regime + local patch, rebase baselines
+#        resync.sh --hash <dir>                 print the tree hash the baseline column holds
 #        resync.sh --clean [--dry-run]          sweep own leftovers + orphan temp_git_* clones
-#        resync.sh --self-test                  exercise apply/regime/patch/sha paths in a scratch dir
+#        resync.sh --self-test                  exercise apply/regime/patch/baseline paths in a scratch dir
 set -euo pipefail
 
 SKILLS_DIR="${SKILLS_DIR:-$HOME/.claude/skills}"
 PLUGINS_JSON="${PLUGINS_JSON:-$HOME/.claude/plugins/installed_plugins.json}"
 PLUGIN_CACHE="${PLUGIN_CACHE:-$HOME/.claude/plugins/cache}"
+MARKETPLACES="${MARKETPLACES:-$HOME/.claude/plugins/marketplaces}"
+MIRRORS="${MIRRORS:-$PLUGIN_CACHE/skills-resync-mirror}"
 INVENTORY="${INVENTORY:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/inventory.tsv}"
 PATCHES="${PATCHES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches}"
 
@@ -21,33 +25,192 @@ PATCHES="${PATCHES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches}"
 # because it is one frontmatter line - the edit most likely to be lost, and the only one that is
 # purely mechanical. Every diff below ignores it, so a skill whose only local change is L6 reads
 # as identical instead of forcing a hand comparison.
+#
+# The line is *frontmatter state*, and a skill is free to talk about it in prose:
+# claude-automation-recommender carries `disable-model-invocation: true  # for user-only` at line
+# 188 as an example. An unanchored whole-file grep reads that as "the flag is already set", so
+# restore_regime gets skipped and a re-vendor silently promotes a slash-only skill to
+# model-invoked - which it did, to that very skill. Every state test goes through has_regime.
 REGIME='disable-model-invocation: true'
-REGIME_RE='^disable-model-invocation:'
+# ponytail: the diff filter is a regex, so it cannot be scoped to the frontmatter the way
+# has_regime is. Anchoring it to the bare `true` form keeps it off documented lines, which all
+# carry a trailing comment. Strip the frontmatter line from copies of both trees before diffing
+# if a body line ever appears in exactly this form.
+REGIME_RE='^disable-model-invocation: *true *$'
+
+# Frontmatter only, tolerating CRLF: fence 1 opens it, fence 2 ends the search.
+has_regime() {                      # $1 SKILL.md
+  [ -f "$1" ] || return 1
+  awk '
+    /^---\r?$/            { fences++; if (fences >= 2) exit; next }
+    fences == 1 && /^disable-model-invocation: *true/ { found = 1; exit }
+    END                   { exit (found ? 0 : 1) }
+  ' "$1"
+}
+
+# Remove the frontmatter regime line in place, tolerating CRLF. Used by gen_patch so a patch owns
+# only L1-L5 and not the line restore_regime re-inserts. No-op when the line is absent.
+strip_regime() {                    # $1 SKILL.md  (edited in place)
+  local f=$1 tmp
+  [ -f "$f" ] || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/skills-resync-strip-XXXXXX")
+  awk '
+    /^---\r?$/            { fences++; print; next }
+    fences == 1 && /^disable-model-invocation: *true\r?$/ { next }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
+}
 
 PY=$(command -v python3 || command -v python) || {
   echo "resync: needs python3 to read $PLUGINS_JSON" >&2; exit 1; }
 
 # --- resolution --------------------------------------------------------------------------------
-# installed_plugins.json records installPath and gitCommitSha and the plugin manager keeps both
-# current, so no version directory is hardcoded anywhere: a plugin update moves the path and this
-# follows it. That is what makes "newest version directory" - wrong for the `unknown`-versioned
-# plugins - never a rule this script has to guess at.
-plugin_root_and_sha() {             # $1 plugin@marketplace -> "<unix path>\t<sha>" (empty if absent)
-  "$PY" -c '
-import json, sys
+# The install cache under plugins/cache is NOT a usable upstream. These plugins are disabled, and
+# `claude plugin update` is version-gated: it refuses to re-fetch a moved sha while plugin.json
+# still names the same version, so a disabled plugin's cache is frozen at whatever it was installed
+# with. Both sides of a cache comparison are then frozen and no drift is ever visible - which is
+# the one failure this whole skill exists to prevent.
+#
+# The marketplace clone under plugins/marketplaces IS current: Claude Code refreshes it on startup
+# and `claude plugin marketplace update` forces it. So upstream resolves marketplace-first, by the
+# source kind the marketplace catalog records for the plugin:
+#
+#   "./plugins/<name>"          the plugin tree lives inside the marketplace clone   -> use it
+#   {source: github, repo}      the marketplace clone *is* the plugin                -> use it
+#   {source: url, url, sha}     content is not in the clone, only a pinned sha       -> mirror it
+#
+# Only the third kind needs anything fetched, and only when the pin has moved past the cache.
+#
+# The baseline column holds a hash of the upstream tree, not a plugin commit sha. A sha names the
+# whole plugin, so any commit anywhere in it reads as "this skill moved"; a per-skill tree hash is
+# exact, is comparable across all three source kinds, and needs no version directory or sha-length
+# juggling. `--hash <dir>` prints one.
+py_helper() { "$PY" - "$@" <<'PY'
+import hashlib, json, os, sys
+
+# Windows text mode turns every \n into \r\n, and the CR lands inside the last tab-separated field
+# the shell reads - so an empty trailing field reads as non-empty and every row misclassifies.
 try:
-    e = json.load(open(sys.argv[1]))["plugins"].get(sys.argv[2]) or [{}]
+    sys.stdout.reconfigure(newline='\n')
 except Exception:
-    e = [{}]
-print(e[0].get("installPath", "") + "\t" + e[0].get("gitCommitSha", ""))' "$PLUGINS_JSON" "$1"
+    pass
+
+def tree_hash(root):
+    if not root or not os.path.isdir(root):
+        return ''
+    h = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            p = os.path.join(dirpath, name)
+            h.update(os.path.relpath(p, root).replace(os.sep, '/').encode() + b'\0')
+            with open(p, 'rb') as fh:
+                h.update(fh.read())
+            h.update(b'\0')
+    return h.hexdigest()[:16]
+
+mode = sys.argv[1]
+if mode == 'hash':
+    print(tree_hash(sys.argv[2]))
+    raise SystemExit(0)
+
+inventory, plugins_json, marketplaces, mirrors = sys.argv[2:6]
+
+def jload(path):
+    try:
+        with open(path, encoding='utf-8') as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+def same_sha(a, b):
+    n = min(len(a), len(b))
+    return n >= 7 and a[:n] == b[:n]
+
+installed = jload(plugins_json).get('plugins', {})
+_catalogs = {}
+
+def catalog(marketplace):
+    if marketplace not in _catalogs:
+        doc = jload(os.path.join(marketplaces, marketplace, '.claude-plugin', 'marketplace.json'))
+        entries = doc.get('plugins', doc) if isinstance(doc, dict) else doc
+        _catalogs[marketplace] = {e.get('name'): e.get('source')
+                                  for e in (entries or []) if isinstance(e, dict)}
+    return _catalogs[marketplace]
+
+def resolve(pid):
+    """-> (plugin root, note, mirror-spec). root '' means unresolvable; note is 'state|detail'."""
+    name, _, marketplace = pid.partition('@')
+    entry = (installed.get(pid) or [{}])[0]
+    cache_root, cache_sha = entry.get('installPath', ''), entry.get('gitCommitSha', '')
+    src = catalog(marketplace).get(name)
+    clone = os.path.join(marketplaces, marketplace)
+
+    if isinstance(src, str):
+        root = os.path.normpath(os.path.join(clone, src))
+        if os.path.isdir(root):
+            return root, '', None
+    elif isinstance(src, dict) and src.get('source') == 'github' and os.path.isdir(clone):
+        return clone, '', None
+    elif isinstance(src, dict) and src.get('source') == 'url':
+        pin, url = src.get('sha', ''), src.get('url', '')
+        if pin and cache_sha and same_sha(pin, cache_sha) and os.path.isdir(cache_root):
+            return cache_root, '', None            # the frozen cache happens to be current
+        mirror = os.path.join(mirrors, pid, pin[:12]) if pin else ''
+        spec = (pid, url, pin) if (pin and url) else None
+        if mirror and os.path.isdir(mirror):
+            return mirror, '', spec
+        return '', 'refresh-needed|%s pins %s, install cache at %s - run --refresh' % (
+            name, pin[:12] or '?', cache_sha[:12] or '?'), spec
+
+    # No catalog entry: the marketplace was removed, or this is a scratch/self-test setup. The
+    # install cache is the only thing left, and stale-but-present beats reporting nothing.
+    if cache_root and os.path.isdir(cache_root):
+        return cache_root, '', None
+    return '', 'upstream-missing|%s: no marketplace entry and no install cache' % pid, None
+
+rows, specs = [], []
+for line in open(inventory, encoding='utf-8'):
+    line = line.rstrip('\n')
+    if not line.strip() or line.startswith('#'):
+        continue
+    f = line.split('\t')
+    if len(f) < 4:
+        continue
+    skill, pid, sub, base = f[0], f[1], f[2], f[3]
+    root, note, spec = resolve(pid)
+    if spec and spec not in specs:
+        specs.append(spec)
+    up = os.path.join(root, sub) if root else ''
+    if up and not os.path.isdir(up):
+        up, note = '', 'upstream-missing|%s not present under %s' % (sub, root)
+    # Forward slashes only: a mixed C:/a\b path is what os.path.join produces on Windows, and
+    # cygpath silently mistranslates it.
+    rows.append([skill, pid, sub, base, up.replace('\\', '/'), tree_hash(up), note])
+
+if mode == 'mirrors':
+    for pid, url, pin in specs:
+        print('\t'.join([pid, url, pin]))
+else:
+    for r in rows:
+        print('\t'.join(r))
+PY
 }
 
-# A 12-char baseline and a 40-char gitCommitSha name the same commit; compare on the shorter.
-sha_same() {                        # $1 baseline  $2 current
-  local a=$1 b=$2 n
-  [ -n "$a" ] && [ -n "$b" ] || return 1
-  n=${#a}; [ ${#b} -lt "$n" ] && n=${#b}
-  [ "$n" -ge 7 ] && [ "${a:0:$n}" = "${b:0:$n}" ]
+# Emits: skill \t plugin \t subpath \t baseline \t upstream-dir \t upstream-hash \t note
+# upstream-dir is empty exactly when note is set. Paths come back native and are converted here,
+# because MSYS mangles argv into Windows form on the way in but leaves stdout alone.
+inventory_resolved() {
+  local skill pid sub base up hash note
+  py_helper resolve "$INVENTORY" "$PLUGINS_JSON" "$MARKETPLACES" "$MIRRORS" \
+  | while IFS=$'\t' read -r skill pid sub base up hash note; do
+      [ -n "$up" ] && up=$(cygpath -u "$up" 2>/dev/null || echo "$up")
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$skill" "$pid" "$sub" "$base" "$up" "$hash" "$note"
+    done
+}
+
+lookup() {                          # $1 skill -> resolved row, or exit 1
+  inventory_resolved | grep -P "^$1\t" || return 1
 }
 
 # Empty output means "no difference beyond the regime line". --strip-trailing-cr is mandatory:
@@ -57,11 +220,76 @@ drift_diff() {                      # $1 upstream  $2 live
   diff -r --strip-trailing-cr -I "$REGIME_RE" "$1" "$2" 2>&1 || true
 }
 
+# --- refresh -----------------------------------------------------------------------------------
+# Makes the current upstream content actually present on disk. Touches plugins/ only - nothing
+# under $SKILLS_DIR is read or written here, so this runs before the user has confirmed anything.
+refresh() {
+  local pid url pin mirror
+  if command -v claude >/dev/null 2>&1; then
+    if claude plugin marketplace update >/dev/null 2>&1; then
+      echo "refresh: marketplace clones updated"
+    else
+      echo "refresh: WARNING 'claude plugin marketplace update' failed - clones may be stale" >&2
+    fi
+  else
+    echo "refresh: WARNING claude CLI not on PATH - marketplace clones not updated" >&2
+  fi
+
+  # A url-pinned plugin is the only kind whose current content is nowhere on disk: the catalog
+  # records a sha, and the install cache is frozen behind it. Fetching the pinned commit shallow is
+  # a couple of seconds and needs no plugin re-install, which would touch enabledPlugins.
+  while IFS=$'\t' read -r pid url pin; do
+    [ -n "$pid" ] || continue
+    mirror="$MIRRORS/$pid/${pin:0:12}"
+    if [ -d "$mirror/.git" ]; then
+      echo "refresh: $pid already mirrored at ${pin:0:12}"; continue
+    fi
+    echo "refresh: mirroring $pid at ${pin:0:12}"
+    rm -rf "$mirror"; mkdir -p "$mirror"
+    if git init -q "$mirror" \
+       && git -C "$mirror" remote add origin "$url" \
+       && git -C "$mirror" fetch -q --depth 1 origin "$pin" \
+       && git -C "$mirror" checkout -q FETCH_HEAD; then
+      :
+    else
+      rm -rf "$mirror"
+      echo "refresh: FAILED to mirror $pid at ${pin:0:12} from $url" >&2
+    fi
+  done < <(py_helper mirrors "$INVENTORY" "$PLUGINS_JSON" "$MARKETPLACES" "$MIRRORS")
+
+  prune_mirrors
+  echo "refresh: done - run --check"
+}
+
+# A mirror is resolved upstream, not a leftover, so the one at the currently pinned sha survives:
+# --check and --diff need a tree to compare against on every later run, and re-fetching it on each
+# invocation would put a network call in the middle of an inspection command. Every other mirror is
+# dead the moment the pin moves, and goes.
+prune_mirrors() {                   # $1 --dry-run to report only
+  local dry=${1:-} keep d rel n=0
+  [ -d "$MIRRORS" ] || return 0
+  keep=$(py_helper mirrors "$INVENTORY" "$PLUGINS_JSON" "$MARKETPLACES" "$MIRRORS" \
+         | awk -F'\t' 'NF>=3 {printf "%s/%s\n", $1, substr($3,1,12)}')
+  while IFS= read -r d; do
+    rel=${d#"$MIRRORS"/}
+    if ! grep -qxF "$rel" <<<"$keep"; then
+      n=$((n + 1)); [ -n "$dry" ] || rm -rf "$d"
+    fi
+  done < <(find "$MIRRORS" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)
+  [ "$n" -eq 0 ] || echo "clean: $n stale mirror(s)$([ -n "$dry" ] && echo ' (dry run)' || echo ' removed')"
+  local live; live=$(grep -c . <<<"$keep" || true)
+  [ "$live" -eq 0 ] || echo "clean: $live mirror(s) kept at the pinned sha (resolved upstream, not a leftover)"
+}
+
 # --- protected local edits as data ---------------------------------------------------------------
 # SKILL.md's L1-L5 are line replacements against a known upstream text, so they are data, not prose:
 # `patches/<skill>.patch` holds them and `patch` replays them onto a fresh vendor. That is what makes
 # a re-vendor of an edited skill mechanical - previously it was a hand step no later check could see
 # had been skipped, since a reverted edit reads as `identical` once the baseline is rebased.
+#
+# The patch is also the *only* record of which local edits exist. Once upstream moves, a diff no
+# longer distinguishes a local edit from the upstream change, so every classification below treats
+# "no patch" as "no local edits" and the REVIEW bucket exists to keep that true.
 #
 # A patch that no longer applies is the whole point: the reject names the exact line where upstream
 # moved onto a local edit, which is the only case that ever needed judgement.
@@ -82,8 +310,7 @@ gen_patch() {                       # $1 upstream  $2 live -> patch on stdout
   # twice: restore_regime writes the line, then the patch hunk finds its own change already there
   # and rejects the whole file - which reads as "upstream moved onto a protected edit" and rolls
   # back a re-vendor that was perfectly applicable. Strip it here so the patch owns only L1-L5.
-  [ -f "$t/b/SKILL.md" ] && grep -vE "$REGIME_RE" "$t/b/SKILL.md" > "$t/b/SKILL.md.tmp" \
-    && mv "$t/b/SKILL.md.tmp" "$t/b/SKILL.md"
+  [ -f "$t/b/SKILL.md" ] && strip_regime "$t/b/SKILL.md"
   ( cd "$t" && diff -ruN --strip-trailing-cr a b ) \
     | sed -E 's/^(---|\+\+\+) ([^\t]*)\t.*/\1 \2/' || true
   rm -rf "$t"
@@ -97,53 +324,35 @@ replay_patch() {                    # $1 skill  $2 live-dir
   patch -p1 -s --no-backup-if-mismatch -d "$2" < "$pf"
 }
 
-# --- inventory ---------------------------------------------------------------------------------
-# Emits: skill \t plugin \t subpath \t baseline \t upstream-dir \t current-sha
-# upstream-dir is empty when the plugin is gone from installed_plugins.json or its cache was swept.
-inventory_resolved() {
-  local skill plugin sub base root sha
-  while IFS=$'\t' read -r skill plugin sub base || [ -n "$skill" ]; do
-    case "$skill" in ''|\#*) continue ;; esac
-    IFS=$'\t' read -r root sha < <(plugin_root_and_sha "$plugin")
-    [ -n "$root" ] && root=$(cygpath -u "$root" 2>/dev/null || echo "$root")
-    [ -n "$root" ] && [ -d "$root/$sub" ] || root=''
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$skill" "$plugin" "$sub" "$base" "${root:+$root/$sub}" "$sha"
-  done < "$INVENTORY"
-}
-
-lookup() {                          # $1 skill -> resolved row, or exit 1
-  inventory_resolved | grep -P "^$1\t" || return 1
-}
-
 # --- check -------------------------------------------------------------------------------------
-# The two inputs decide the state jointly: the sha says whether upstream moved, the diff says
-# whether anything beyond the protected edits is present. Never infer either from diff size.
+# Two inputs decide the state jointly: the upstream tree hash against the baseline says whether
+# upstream moved, the diff says what a re-vendor would change. Never infer either from diff size.
 check() {
-  local skill plugin sub base up sha state d n r appliable='' review='' blocked='' regimes=0
+  local skill pid sub base up hash note state d n r pf
+  local appliable='' review='' blocked='' stale='' regimes=0
   printf '%-32s %-6s %s\n' SKILL REGIME 'STATE / DETAIL'
-  while IFS=$'\t' read -r skill plugin sub base up sha; do
-    local pf; pf=$(patch_file "$skill")
+  while IFS=$'\t' read -r skill pid sub base up hash note; do
+    pf=$(patch_file "$skill")
     # The diff ignores the regime line, so report it separately: without this a skill that lost
     # its L6 flag out of band would read as identical, which is the one failure this whole skill
     # exists to catch. Reported, not asserted - a deliberate promotion needs no bookkeeping.
-    if grep -qE "$REGIME_RE *true" "$SKILLS_DIR/$skill/SKILL.md" 2>/dev/null; then
+    if has_regime "$SKILLS_DIR/$skill/SKILL.md" 2>/dev/null; then
       r='slash'; regimes=$((regimes + 1))
     else
       r='-'
     fi
     if [ ! -d "$SKILLS_DIR/$skill" ]; then
       state=not-vendored; d="no $SKILLS_DIR/$skill"
-    elif [ -z "$up" ]; then
-      state=upstream-missing; d="$plugin cache swept or plugin uninstalled"
+    elif [ -n "$note" ]; then
+      state=${note%%|*}; d=${note#*|}
     else
       n=$(drift_diff "$up" "$SKILLS_DIR/$skill" | grep -c . || true)
-      if sha_same "$base" "$sha"; then
+      if [ "$base" = "$hash" ]; then
         if [ "$n" -eq 0 ]; then
           state=identical; d=''
         elif [ ! -f "$pf" ]; then
-          # A local edit with no patch is the one state that cannot survive a re-vendor. Upstream
-          # has not moved, so nothing is lost yet - but it will be, silently, the day it does.
+          # Upstream is at the baseline, so this diff is unambiguously a local edit - and this is
+          # the only window in which it is. Capture it now or the next upstream move eats it.
           state=unsnapshotted; d="$n diff lines, no patch - run --snapshot $skill"
         elif [ -n "$(diff -q <(gen_patch "$up" "$SKILLS_DIR/$skill") "$pf" 2>&1)" ]; then
           state=patch-stale;  d="local edits changed since snapshot - re-run --snapshot $skill"
@@ -151,14 +360,14 @@ check() {
           state=local-only;   d="$n diff lines, upstream at baseline, patch current"
         fi
       else
-        if [ "$n" -eq 0 ]; then
-          state=upstream-changed; d="baseline ${base:0:12} -> ${sha:0:12}"
-        elif [ -f "$pf" ]; then
-          # Upstream moved onto an edited skill - appliable, because the patch replays the edit.
-          # If upstream rewrote the same lines the replay rejects and --apply rolls back.
-          state=upstream-changed; d="baseline ${base:0:12} -> ${sha:0:12}, local patch will replay"
+        # Upstream moved. The patch is the record of local edits, so its absence means there are
+        # none and the whole diff is upstream's - an unedited skill with a moved upstream is the
+        # mainline update, and must be appliable rather than held back as ambiguous.
+        state=upstream-changed
+        if [ -f "$pf" ]; then
+          d="upstream $base -> $hash, $n diff lines, local patch will replay"
         else
-          state=both-changed;     d="$n diff lines, upstream moved to ${sha:0:12}, no patch"
+          d="upstream $base -> $hash, $n diff lines to take"
         fi
       fi
     fi
@@ -166,6 +375,7 @@ check() {
     case $state in
       upstream-changed)            appliable+=" $skill" ;;
       unsnapshotted|patch-stale)   review+=" $skill" ;;
+      refresh-needed)              stale+=" $skill" ;;
       identical|local-only)        ;;
       *)                           blocked+=" $skill" ;;
     esac
@@ -176,7 +386,8 @@ check() {
   echo
   echo "APPLIABLE:${appliable:- none}      # --apply these after one confirmation"
   echo "REVIEW:${review:- none}      # local edits not captured in a patch - --snapshot them"
-  echo "BLOCKED:${blocked:- none}      # upstream moved onto an uncaptured edit, or upstream gone"
+  echo "REFRESH:${stale:- none}      # upstream not on disk - run --refresh, then --check again"
+  echo "BLOCKED:${blocked:- none}      # not vendored, or upstream gone"
   local unmapped
   unmapped=$(comm -23 \
     <(cd "$SKILLS_DIR" && ls -d */ 2>/dev/null | tr -d /  | sort) \
@@ -190,7 +401,7 @@ check() {
 # Stage, verify, back up, swap. Nothing under $SKILLS_DIR is touched until a verified copy exists,
 # so a failed copy can never leave a skill half-written. Replacement is wholesale, not a merge: a
 # stale file left behind by an upstream deletion is drift no later diff would catch.
-apply_one() {                       # $1 skill  $2 upstream  $3 work -> prints new sha on success
+apply_one() {                       # $1 skill  $2 upstream  $3 work
   local skill=$1 up=$2 work=$3
   local live="$SKILLS_DIR/$skill" stage="$work/stage/$skill" backup="$work/backup/$skill" regime=no patched=''
 
@@ -199,9 +410,9 @@ apply_one() {                       # $1 skill  $2 upstream  $3 work -> prints n
 
   # `grep && regime=yes` would return non-zero for a skill with no regime line, which under set -e
   # aborts apply_one before it stages anything whenever it is called outside a condition.
-  if grep -qE "$REGIME_RE *true" "$live/SKILL.md" 2>/dev/null; then regime=yes; fi
+  if has_regime "$live/SKILL.md" 2>/dev/null; then regime=yes; fi
 
-  mkdir -p "$work/stage" "$work/backup"
+  rm -rf "$work/stage" "$work/backup"; mkdir -p "$work/stage" "$work/backup"
   cp -r "$up" "$stage"
   # A copy must be byte-identical - no --strip-trailing-cr here, or a mangled copy verifies clean.
   if ! diff -rq "$up" "$stage" >/dev/null; then
@@ -214,7 +425,7 @@ apply_one() {                       # $1 skill  $2 upstream  $3 work -> prints n
     echo "  $skill: swap failed, original restored" >&2; return 1
   fi
 
-  if [ "$regime" = yes ] && ! grep -qE "$REGIME_RE" "$live/SKILL.md"; then
+  if [ "$regime" = yes ] && ! has_regime "$live/SKILL.md"; then
     restore_regime "$live/SKILL.md" || { echo "  $skill: WARNING regime line not restored" >&2; }
   fi
 
@@ -233,7 +444,16 @@ apply_one() {                       # $1 skill  $2 upstream  $3 work -> prints n
       return 1
     fi
   fi
-  echo "  $skill: written$([ "$regime" = yes ] && echo ' +regime')$patched" >&2
+
+  # Post-condition: the live tree must be exactly upstream plus the protected edits. `patch` can
+  # succeed with fuzz and place an edit on the wrong line, and a duplicated regime line applies
+  # cleanly too - both read as success everywhere else. Checked here, while the backup still exists,
+  # so exiting 0 means verified rather than merely attempted.
+  if ! verify_patch "$skill" "$up"; then
+    rm -rf "$live"; mv "$backup" "$live"
+    echo "  $skill: post-apply tree does not match upstream+patch, ROLLED BACK" >&2; return 1
+  fi
+  echo "  $skill: written$([ "$regime" = yes ] && echo ' +regime')$patched +verified" >&2
 }
 
 # Re-insert L6 before the closing frontmatter fence. Tolerates CRLF, and refuses a file with no
@@ -250,7 +470,7 @@ restore_regime() {                  # $1 SKILL.md
 
 # Rebase the inventory in the same pass as the write. Left for later it never happens, and the next
 # run then reports every one of these skills as upstream-changed and re-vendors them again.
-rebase_baselines() {                # $@ skill=sha
+rebase_baselines() {                # $@ skill=hash
   [ $# -gt 0 ] || return 0
   "$PY" - "$INVENTORY" "$@" <<'PY'
 import sys
@@ -267,8 +487,8 @@ PY
 }
 
 apply() {
-  local work written=0 failed=0 rebase=() skill row up sha
-  work=$(mktemp -d "${TMPDIR:-/tmp}/skills-resync-XXXXXX")
+  local work written=0 failed=0 rebase=() skill row base up hash note
+  work=$(mktemp -d "${TMPDIR:-/tmp}/skills-resync-work-XXXXXX")
   # shellcheck disable=SC2064
   trap "rm -rf '$work'" EXIT        # fires on success, failure and interrupt alike
 
@@ -276,16 +496,22 @@ apply() {
     if ! row=$(lookup "$skill"); then
       echo "  $skill: not in inventory.tsv" >&2; failed=$((failed + 1)); continue
     fi
-    up=$(cut -f5 <<<"$row"); sha=$(cut -f6 <<<"$row")
-    # Interlock: a live diff with no patch is an edit the swap would destroy with no way to replay
-    # it. Refuse rather than rely on the caller having read the BLOCKED list.
-    if [ -n "$up" ] && [ ! -f "$(patch_file "$skill")" ] \
+    base=$(cut -f4 <<<"$row"); up=$(cut -f5 <<<"$row")
+    hash=$(cut -f6 <<<"$row"); note=$(cut -f7 <<<"$row")
+    if [ -n "$note" ]; then
+      echo "  $skill: ${note%%|*} - ${note#*|}" >&2; failed=$((failed + 1)); continue
+    fi
+    # Interlock: an unsnapshotted local edit is the one thing the swap destroys with no way to
+    # replay it - and it is only *detectable* while upstream still sits at the baseline. Refuse
+    # exactly that case. Comparing against a moved upstream instead would read the upstream change
+    # itself as an uncaptured edit and refuse every unedited skill, which is the mainline update.
+    if [ "$base" = "$hash" ] && [ ! -f "$(patch_file "$skill")" ] \
        && [ -n "$(drift_diff "$up" "$SKILLS_DIR/$skill")" ]; then
       echo "  $skill: refused - uncaptured local edits (run --snapshot $skill first)" >&2
       failed=$((failed + 1)); continue
     fi
     if apply_one "$skill" "$up" "$work"; then
-      written=$((written + 1)); rebase+=("$skill=$sha")
+      written=$((written + 1)); rebase+=("$skill=$hash")
     else
       failed=$((failed + 1))
     fi
@@ -297,7 +523,7 @@ apply() {
   clean
   echo "written=$written failed=$failed baselines_rebased=${#rebase[@]}"
   [ "$written" -eq 0 ] \
-    || echo "Regime line and protected edits replayed automatically. Re-run --check to confirm."
+    || echo "Regime line and protected edits replayed and verified against upstream+patch."
   [ "$failed" -eq 0 ] \
     || echo "Rolled-back skills keep their old baseline, so --check still reports them."
   [ "$failed" -eq 0 ]
@@ -308,16 +534,19 @@ apply() {
 # upstream is off-baseline: the diff there mixes the local edit with the upstream change, and
 # snapshotting it would bake an upstream revert into the patch permanently.
 snapshot() {
-  local skill row up sha base n; local rc=0
+  local skill row up base hash note n; local rc=0
   mkdir -p "$PATCHES"
   for skill in "$@"; do
     if ! row=$(lookup "$skill"); then
       echo "  $skill: not in inventory.tsv" >&2; rc=1; continue
     fi
-    base=$(cut -f4 <<<"$row"); up=$(cut -f5 <<<"$row"); sha=$(cut -f6 <<<"$row")
-    [ -n "$up" ] || { echo "  $skill: upstream missing" >&2; rc=1; continue; }
-    if ! sha_same "$base" "$sha"; then
-      echo "  $skill: refused - upstream moved to ${sha:0:12}; reconcile by hand first" >&2
+    base=$(cut -f4 <<<"$row"); up=$(cut -f5 <<<"$row")
+    hash=$(cut -f6 <<<"$row"); note=$(cut -f7 <<<"$row")
+    if [ -n "$note" ]; then
+      echo "  $skill: ${note%%|*} - ${note#*|}" >&2; rc=1; continue
+    fi
+    if [ "$base" != "$hash" ]; then
+      echo "  $skill: refused - upstream moved to $hash; reconcile by hand first" >&2
       rc=1; continue
     fi
     if [ -z "$(drift_diff "$up" "$SKILLS_DIR/$skill")" ]; then
@@ -352,6 +581,10 @@ verify_patch() {                    # $1 skill  $2 upstream
 # Everything a resync run can leave behind, plus the marketplace clones the plugin installer
 # orphans at cache/temp_git_*. Runs unattended at the end of every --apply.
 #
+# The globs name this script's own three temp prefixes rather than skills-resync-* : the self-test
+# root is a skills-resync-test-* directory, and a wildcard would have --apply delete the test it is
+# running under.
+#
 # An orphan younger than ORPHAN_MIN_AGE minutes is left alone and reported: a concurrent plugin
 # install does its work inside one of these, and a resync cannot tell a live clone from a corpse
 # by name. Age is the knob - lower it when sweeping a machine known to be idle.
@@ -359,7 +592,9 @@ ORPHAN_MIN_AGE="${ORPHAN_MIN_AGE:-60}"
 
 clean() {                           # $1 --dry-run to report only
   local dry=${1:-} p targets=() young=0
-  for p in "${TMPDIR:-/tmp}"/skills-resync-* /skills-resync-backup; do
+  for p in "${TMPDIR:-/tmp}"/skills-resync-work-* "${TMPDIR:-/tmp}"/skills-resync-gen-* \
+           "${TMPDIR:-/tmp}"/skills-resync-vfy-* "${TMPDIR:-/tmp}"/skills-resync-strip-* \
+           /skills-resync-backup; do
     [ -e "$p" ] && targets+=("$p")
   done
   # .regime sits at depth 2; patch rejects land beside the file they failed on, which for a
@@ -371,10 +606,14 @@ clean() {                           # $1 --dry-run to report only
   young=$(find "$PLUGIN_CACHE" -maxdepth 1 -name 'temp_git_*' -mmin -"$ORPHAN_MIN_AGE" 2>/dev/null | grep -c . || true)
 
   [ "$young" -eq 0 ] || echo "clean: $young temp_git_* younger than ${ORPHAN_MIN_AGE}m kept (may be in use)"
-  if [ ${#targets[@]} -eq 0 ]; then echo "clean: nothing to remove"; return 0; fi
-  du -sh "${targets[@]}" 2>/dev/null || true
-  echo "clean: ${#targets[@]} leftover path(s)$([ -n "$dry" ] && echo ' (dry run, nothing removed)')"
-  [ -n "$dry" ] || { rm -rf "${targets[@]}"; echo "clean: removed"; }
+  if [ ${#targets[@]} -gt 0 ]; then
+    du -sh "${targets[@]}" 2>/dev/null || true
+    echo "clean: ${#targets[@]} leftover path(s)$([ -n "$dry" ] && echo ' (dry run, nothing removed)')"
+    [ -n "$dry" ] || { rm -rf "${targets[@]}"; echo "clean: removed"; }
+  else
+    echo "clean: no backup or temp leftovers"
+  fi
+  prune_mirrors "$dry"
 }
 
 # --- self-test --------------------------------------------------------------------------------
@@ -382,6 +621,10 @@ self_test() {
   local root; root=$(mktemp -d "${TMPDIR:-/tmp}/skills-resync-test-XXXXXX")
   # shellcheck disable=SC2064
   trap "rm -rf '$root'" RETURN
+  # Every path the tested code sweeps or reads has to point inside the scratch root, or a self-test
+  # that reaches apply() would clean the real plugin cache and mirrors on its way through.
+  PLUGIN_CACHE="$root/cache"; MIRRORS="$root/mirrors"; MARKETPLACES="$root/marketplaces"
+  mkdir -p "$PLUGIN_CACHE"
 
   mkdir -p "$root/up/demo" "$root/skills/demo" "$root/work"
   printf -- '---\nname: demo\n---\nnew\n' > "$root/up/demo/SKILL.md"
@@ -391,7 +634,7 @@ self_test() {
   SKILLS_DIR="$root/skills"
   INVENTORY="$root/inventory.tsv"
   PATCHES="$root/patches"; mkdir -p "$PATCHES"
-  printf 'demo\tp@m\tskills/demo\tOLDSHA1234567\n' > "$INVENTORY"
+  printf 'demo\tp@m\tskills/demo\tOLDHASH123456\n' > "$INVENTORY"
 
   apply_one demo "$root/up/demo" "$root/work" 2>/dev/null
   grep -q '^new$' "$root/skills/demo/SKILL.md" \
@@ -405,8 +648,8 @@ self_test() {
   [ -z "$(drift_diff "$root/up/demo" "$root/skills/demo")" ] \
     || { echo "self-test FAIL: regime-only diff not ignored" >&2; return 1; }
 
-  rebase_baselines demo=NEWSHA7654321
-  grep -q $'demo\tp@m\tskills/demo\tNEWSHA7654321' "$INVENTORY" \
+  rebase_baselines demo=NEWHASH654321
+  grep -q $'demo\tp@m\tskills/demo\tNEWHASH654321' "$INVENTORY" \
     || { echo "self-test FAIL: baseline not rebased" >&2; return 1; }
 
   # A missing upstream must leave the live copy untouched.
@@ -424,6 +667,14 @@ self_test() {
   fi
   [ ! -e "$root/skills/demo/SKILL.md.regime" ] \
     || { echo "self-test FAIL: temp file left behind" >&2; return 1; }
+
+  # --- the tree hash is what the baseline compares on -------------------------------------------
+  [ "$(py_helper hash "$root/up/demo")" = "$(py_helper hash "$root/up/demo")" ] \
+    || { echo "self-test FAIL: tree hash not stable" >&2; return 1; }
+  printf 'x\n' > "$root/up/demo/extra.md"
+  [ "$(py_helper hash "$root/up/demo")" != "$(py_helper hash "$root/skills/demo")" ] \
+    || { echo "self-test FAIL: tree hash blind to an added file" >&2; return 1; }
+  rm -f "$root/up/demo/extra.md"
 
   # --- protected edits replay across a re-vendor ------------------------------------------------
   # A local edit on a line upstream does not touch: the patch must carry it onto the new vendor.
@@ -472,21 +723,94 @@ self_test() {
   [ -z "$(find "$root/skills3" -name '*.rej' -o -name '*.orig' | grep . || true)" ] \
     || { echo "self-test FAIL: reject/backup files left in place" >&2; return 1; }
 
+  # --- the mainline update: unedited skill, upstream moved --------------------------------------
+  # The regression this guards is the one that made the whole skill inert. Classification and the
+  # apply interlock both compared the live copy against the *moved* upstream, so the upstream change
+  # itself read as an uncaptured local edit: every unedited skill came out BLOCKED and was refused.
+  # Driven through check() and apply() rather than apply_one, because that is where the bug lived.
+  mkdir -p "$root/up4/p/skills/demo" "$root/skills4/demo" "$root/patches4"
+  SKILLS_DIR="$root/skills4"; PATCHES="$root/patches4"; INVENTORY="$root/inv4.tsv"
+  PLUGINS_JSON="$root/plugins4.json"
+  printf -- '---\nname: demo\n---\nUPSTREAM-v2\n' > "$root/up4/p/skills/demo/SKILL.md"
+  printf -- '---\nname: demo\n---\nupstream-v1\n' > "$root/skills4/demo/SKILL.md"
+  "$PY" -c 'import json,sys; json.dump({"plugins":{"p@m":[{"installPath":sys.argv[1],
+            "gitCommitSha":"deadbeefdeadbeef"}]}}, open(sys.argv[2],"w"))' \
+       "$root/up4/p" "$PLUGINS_JSON"
+  printf 'demo\tp@m\tskills/demo\t0000000000000000\n' > "$INVENTORY"
+  # Captured, not piped into grep -q: under pipefail an early-exiting grep SIGPIPEs check and the
+  # pipeline reports 141 however the assertion actually turned out.
+  case "$(check)" in *'APPLIABLE: demo'*) ;;
+    *) echo "self-test FAIL: unedited skill with a moved upstream is not APPLIABLE" >&2; return 1 ;;
+  esac
+  apply demo >/dev/null 2>&1 \
+    || { echo "self-test FAIL: apply refused an unedited skill with a moved upstream" >&2; return 1; }
+  grep -q '^UPSTREAM-v2$' "$root/skills4/demo/SKILL.md" \
+    || { echo "self-test FAIL: upstream update not taken" >&2; return 1; }
+  [ "$(cut -f4 "$INVENTORY")" = "$(py_helper hash "$root/up4/p/skills/demo")" ] \
+    || { echo "self-test FAIL: baseline not rebased to the upstream tree hash" >&2; return 1; }
+  case "$(check)" in *'identical'*) ;;
+    *) echo "self-test FAIL: re-check after apply does not read identical" >&2; return 1 ;;
+  esac
+  [ -d "$root" ] \
+    || { echo "self-test FAIL: apply's clean deleted the scratch root" >&2; return 1; }
+
+  # An uncaptured local edit is still refused - upstream sits at the baseline, so it is detectable.
+  printf -- '---\nname: demo\n---\nHAND-EDIT\n' > "$root/skills4/demo/SKILL.md"
+  if apply demo >/dev/null 2>&1; then
+    echo "self-test FAIL: apply overwrote an uncaptured local edit" >&2; return 1
+  fi
+  grep -q '^HAND-EDIT$' "$root/skills4/demo/SKILL.md" \
+    || { echo "self-test FAIL: refused apply still touched the live copy" >&2; return 1; }
+
+  # --- a body prose mention must not read as the frontmatter flag ------------------------------
+  # The regression: claude-automation-recommender documents `disable-model-invocation: true` in its
+  # body. An unanchored whole-file grep matched that line, so restore_regime was skipped and the
+  # skill got silently promoted to model-invoked. has_regime scopes to the frontmatter; this checks
+  # both it and the apply path that depends on it. Temps live under $root so the RETURN trap reaps
+  # them - a real /tmp mktemp here would leak, since clean() never runs in the self-test.
+  local doc="$root/doc-neg" doc2="$root/doc-pos"
+  printf -- '---\nname: demo\n---\nbody\nSet disable-model-invocation: true  # for user-only\n' > "$doc"
+  has_regime "$doc" \
+    && { echo "self-test FAIL: body prose mention read as a frontmatter regime flag" >&2; return 1; }
+  # And the positive control: the same line in the frontmatter does count.
+  printf -- '---\nname: demo\ndisable-model-invocation: true\n---\nbody\n' > "$doc2"
+  has_regime "$doc2" \
+    || { echo "self-test FAIL: frontmatter regime flag not detected" >&2; return 1; }
+
+  # End-to-end: a slash-only skill whose upstream *documents* the flag in prose must be re-flagged
+  # after a re-vendor, not silently promoted by the body mention.
+  mkdir -p "$root/up5/demo" "$root/skills5/demo" "$root/work5"
+  SKILLS_DIR="$root/skills5"
+  printf -- '---\nname: demo\n---\nv1\nSet disable-model-invocation: true  # example\n' > "$root/up5/demo/SKILL.md"
+  awk -v line="$REGIME" '
+    /^---\r?$/ { fences++; if (fences == 2) print line; print; next }
+    { print }
+  ' "$root/up5/demo/SKILL.md" > "$root/skills5/demo/SKILL.md"
+  apply_one demo "$root/up5/demo" "$root/work5" 2>/dev/null \
+    || { echo "self-test FAIL: apply of a body-mention skill failed" >&2; return 1; }
+  has_regime "$root/skills5/demo/SKILL.md" \
+    || { echo "self-test FAIL: regime flag lost on a skill that documents it in prose" >&2; return 1; }
+  [ "$(awk '/^---\r?$/{f++} f==1&&/^disable-model-invocation/{c++} END{print c}' "$root/skills5/demo/SKILL.md")" = 1 ] \
+    || { echo "self-test FAIL: regime flag duplicated after restore" >&2; return 1; }
+
   echo "self-test OK"
 }
 
-usage() { sed -n '6,11p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; }
+usage() { sed -n '/^# Usage:/,/^set -/p' "${BASH_SOURCE[0]}" | sed -n 's/^# \?//p'; }
 
 case "${1:---help}" in
+  --refresh)   refresh ;;
   --check)     check ;;
   --diff)      [ $# -eq 2 ] || { usage; exit 2; }
                row=$(lookup "$2") || { echo "$2: not in inventory.tsv" >&2; exit 1; }
-               up=$(cut -f5 <<<"$row")
-               [ -n "$up" ] || { echo "$2: upstream missing" >&2; exit 1; }
+               up=$(cut -f5 <<<"$row"); note=$(cut -f7 <<<"$row")
+               [ -z "$note" ] || { echo "$2: ${note%%|*} - ${note#*|}" >&2; exit 1; }
                drift_diff "$up" "$SKILLS_DIR/$2" ;;
   --snapshot)  shift; [ $# -gt 0 ] || { usage; exit 2; }; snapshot "$@" ;;
   --apply)     shift; [ $# -gt 0 ] || { usage; exit 2; }; apply "$@" ;;
+  --hash)      [ $# -eq 2 ] || { usage; exit 2; }; py_helper hash "$2" ;;
   --clean)     clean "${2:-}" ;;
   --self-test) self_test ;;
+  -h|--help)   usage ;;
   *)           usage; exit 2 ;;
 esac

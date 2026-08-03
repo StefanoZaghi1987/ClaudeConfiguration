@@ -7,8 +7,9 @@ allowed-tools: Bash, Read, Glob, Grep, Edit, Write
 
 These skills were copied out of their plugins so they survive the plugin being disabled, updated
 or swept. They receive no marketplace updates. `scripts/resync.sh` owns every mechanical step —
-resolving upstream, classifying drift, swapping the directory, replaying the protected local edits,
-restoring the invocation regime, rebasing the baseline, deleting its own leftovers.
+refreshing upstream, resolving it, classifying drift, swapping the directory, replaying the
+protected local edits, restoring the invocation regime, verifying the result, rebasing the
+baseline, deleting its own leftovers.
 
 This document owns the judgement, and there is now exactly one occasion for it: **a patch that
 rejects**, meaning upstream rewrote a line a local edit owns. Everything else is decided by the
@@ -18,10 +19,11 @@ Never write before the user confirms.
 
 ## Three sources of truth
 
-`scripts/inventory.tsv` — which plugin each skill came from, its subpath, and the commit it was
-vendored at. The script resolves the plugin root from `installed_plugins.json`'s `installPath`, so
-no version directory is recorded anywhere and a plugin update simply moves the path under it. The
-baseline column is rewritten by `--apply`; hand-editing it makes `--check` lie in both directions.
+`scripts/inventory.tsv` — which plugin each skill came from, its subpath, and the upstream **tree
+hash** it was vendored at (a per-skill hash of the upstream skill directory, not a plugin commit
+sha — see *Upstream resolution*). The script resolves the upstream from the marketplace clone, so
+no version directory is recorded anywhere. The baseline column is rewritten by `--apply`;
+hand-editing it makes `--check` lie in both directions.
 
 `scripts/patches/<skill>.patch` — the protected local edits themselves, as a patch `--apply` replays
 onto each fresh vendor. Generated only by `--snapshot`, never by hand. This is what makes a
@@ -80,6 +82,12 @@ rejects and you have to decide what the edit should become against the rewritten
   `incremental-implementation` and `interview-me` were deliberately promoted back to model-invoked
   and are byte-identical to upstream — an absent flag on those three is the intended state.
 
+  The regime test is scoped to the **frontmatter** (`has_regime`), not a whole-file grep:
+  `claude-automation-recommender` documents `disable-model-invocation: true` in its body as an
+  example, and an unanchored grep matched that line — so `--apply` skipped the restore and silently
+  promoted the skill to model-invoked. Scoping to the frontmatter makes the REGIME column the
+  trustworthy signal its count relies on.
+
 ## What the inventory cannot say
 
 - **`superpowers`** — only 6 of the plugin's 14 skills are vendored. The other 8, including
@@ -123,21 +131,30 @@ pointers. They are inert and accepted. Flag one only if it becomes an executable
 
 ## Procedure
 
-1. **`bash scripts/resync.sh --check`.** Every row is decided by three inputs jointly — the baseline
-   sha against the plugin's current `gitCommitSha` says whether upstream moved, the diff says
-   whether anything beyond L6 is present, and the presence of a current patch says whether that
-   diff can be replayed. It ends in four buckets:
+0. **`bash scripts/resync.sh --refresh`.** Pulls the marketplace clones and mirrors any plugin the
+   catalog pins to a url+sha (superpowers, mattpocock-skills) whose current content is nowhere on
+   disk. This runs first and touches nothing under `~/.claude/skills`. It is mandatory before the
+   first `--check` of a session: the install cache is frozen for disabled plugins (see *Upstream
+   resolution* below), so without it `--check` compares against a stale tree and reports nothing.
+
+1. **`bash scripts/resync.sh --check`.** Every row is decided by two inputs jointly — the upstream
+   **tree hash** against the baseline says whether upstream moved, and the diff says what a
+   re-vendor would change. The patch is the record of local edits, so its absence means there are
+   none. It ends in five buckets:
 
    | Bucket | Meaning | Action |
    |---|---|---|
    | `identical` / `local-only` | no drift, or a local edit with a current patch | none |
    | `REVIEW` | a local edit that is `unsnapshotted` or `patch-stale` | step 2 |
    | `APPLIABLE` | upstream moved; any local edit has a patch to replay | steps 3–4 |
-   | `BLOCKED` | upstream moved onto an **uncaptured** edit, or upstream gone | by hand, one at a time |
+   | `REFRESH` | upstream content is not on disk (a mirror missing or cache swept) | step 0 |
+   | `BLOCKED` | not vendored, or upstream gone | by hand, one at a time |
 
    `local-only` with a current patch is silent and healthy — the edit is captured, so a later
-   re-vendor replays it. Never infer a bucket from diff size: a large diff on an unmoved sha is
-   still a local edit, and a small one on a moved sha is still an upstream change.
+   re-vendor replays it. Never infer a bucket from diff size: a large diff on an unchanged tree
+   is still a local edit, and a small one on a changed tree is still an upstream change. The
+   baseline is a per-skill tree hash, not a plugin commit sha, so a commit elsewhere in the
+   plugin no longer reads as "this skill moved".
 2. For each `REVIEW` row run `--diff <skill>` and check the diff against L1–L5 above. Confined to
    them, run **`--snapshot <skill>`** to capture it and the row goes quiet. Anything else is an
    **undocumented local edit**: report it inline and document it as a new L-flag in the same pass,
@@ -148,9 +165,10 @@ pointers. They are inert and accepted. Flag one only if it becomes an executable
    stages from upstream, verifies the staged copy is byte-identical, backs the live directory up
    inside a `mktemp -d`, swaps wholesale — a merge would leave behind stale files that an upstream
    deletion should have removed, and that no later diff would catch — restores L6, replays the
-   skill's patch, rebases the baseline, and sweeps every leftover. Nothing under `~/.claude/skills`
-   is touched until a verified copy exists, and a skill whose patch rejects is **rolled back whole**
-   and keeps its old baseline, so a partial re-vendor is not a state this can reach.
+   skill's patch, **verifies the live tree equals upstream+patch**, rebases the baseline, and sweeps
+   every leftover. Nothing under `~/.claude/skills` is touched until a verified copy exists, and a
+   skill whose patch rejects or fails verification is **rolled back whole** and keeps its old
+   baseline, so a partial re-vendor is not a state this can reach.
 5. Re-run `--check`. Expect `identical` or `local-only`. Do not report success from the fact that
    `--apply` exited 0.
 6. For each rolled-back skill, reconcile by hand — this is the judgement the patches exist to
@@ -160,14 +178,39 @@ pointers. They are inert and accepted. Flag one only if it becomes an executable
    backup directories, any `SKILL.md.regime` staging file, any `.rej`/`.orig` a rejected patch left,
    `/skills-resync-backup` at the Git Bash mount root left by an older copy of this skill, **and**
    the marketplace clones the plugin installer orphans at `~/.claude/plugins/cache/temp_git_*`.
-   Orphans younger than an hour are kept and reported instead — a concurrent plugin install works
-   inside one, and nothing here can tell a live clone from a corpse by name. Override with
-   `ORPHAN_MIN_AGE` on a machine known to be idle. Run `--clean --dry-run` on its own to size the
-   leftovers without a re-vendor.
+   It also prunes dead mirrors under `plugins/cache/skills-resync-mirror/`: the one at the
+   currently pinned sha survives (it *is* the resolved upstream for `--check`/`--diff`); every
+   mirror from a sha the catalog no longer pins is removed. Orphans younger than an hour are kept
+   and reported instead — a concurrent plugin install works inside one, and nothing here can tell a
+   live clone from a corpse by name. Override with `ORPHAN_MIN_AGE` on a machine known to be idle.
+   Run `--clean --dry-run` on its own to size the leftovers without a re-vendor.
 8. Report what was written, what was skipped, and what is still blocked.
 
 `--self-test` exercises the replace, stale-file, missing-upstream, regime-restore, patch-replay,
-reject-rollback and baseline-rebase paths in a scratch directory, touching nothing real. Run it
-after editing the script.
+reject-rollback, baseline-rebase, mainline-update and body-mention paths in a scratch directory,
+touching nothing real. Run it after editing the script.
 
 Recommended cadence: monthly, or when a skill behaves unexpectedly.
+
+## Upstream resolution
+
+The install cache under `plugins/cache/` is **not** a usable upstream. These plugins are disabled,
+and `claude plugin update` is version-gated: it answers "already at the latest version" and refuses
+to re-fetch a moved sha while `plugin.json` still names the same version. A disabled plugin's cache
+is therefore frozen at whatever it was installed with, and a diff against it sees no drift — the one
+failure this whole skill exists to prevent. (Proven live: the cache reported `claude-automation-
+recommender` as `identical` while the marketplace tree it was copied from had moved.)
+
+So the script resolves upstream from the **marketplace clone** under `plugins/marketplaces/`, which
+Claude Code refreshes, by the source kind the marketplace catalog records for the plugin:
+
+- `./plugins/<name>` — the plugin tree lives inside the marketplace clone → use it in place
+  (skill-creator, mcp-server-dev, claude-code-setup).
+- `{source: github}` — the marketplace clone *is* the plugin → use it (agent-skills).
+- `{source: url, sha}` — only a pinned sha is recorded, content not in the clone → mirror it
+  (superpowers, mattpocock-skills). `--refresh` does the shallow fetch; the mirror lives under
+  `plugins/cache/skills-resync-mirror/<plugin>/<sha12>/` and is kept (not swept) for as long as the
+  catalog pins that sha.
+
+If the catalog entry is gone and the install cache is gone too, the row reads `upstream-missing`
+(BLOCKED). `--hash <dir>` prints the tree hash a baseline holds, for reconciling by hand.
