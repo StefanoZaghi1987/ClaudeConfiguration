@@ -38,8 +38,11 @@ rejects and you have to decide what the edit should become against the rewritten
 
 - **L1** — `idea-refine/SKILL.md`: the script path uses `${CLAUDE_SKILL_DIR}`, not a relative
   `skills/...` path, so it resolves at user scope.
-- **L2** — `spec-driven-development/SKILL.md` Phase 4: points at `superpowers:*` skills, because the
-  `agent-skills` skills it originally referenced are not vendored.
+- **L2** — `spec-driven-development/SKILL.md` Phase 4 names no other skill at all: it states the
+  test-first behaviour and the load-only-what-the-task-needs behaviour directly. Upstream's three
+  pointers all fail here — `skills/…` paths do not resolve at user scope, `test-driven-development`
+  is not vendored, and `context-engineering` is user-invoked so no skill can reach it. Prose is the
+  only form with nothing left to dangle, which is how L3 handles the same problem.
 - **L3** — `executing-plans`, `subagent-driven-development`, `systematic-debugging`, `writing-plans`
   carry no `superpowers:` prefixes and no `../<skill>/` paths. Upstream, 16 references pointed at
   sibling plugin skills; 5 resolved to skills vendored here and were reduced to bare names, and 11
