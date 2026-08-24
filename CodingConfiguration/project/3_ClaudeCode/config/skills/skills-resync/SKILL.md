@@ -76,8 +76,8 @@ rejects and you have to decide what the edit should become against the rewritten
 
   Because the diff ignores the line, `--check` reports it as its own `REGIME` column instead. That
   column is the only thing that catches an L6 lost out of band, so reconcile the count:
-  **18 = 11 locally added + 3 flagged upstream + 4 originals with no upstream**, printed as 14
-  mapped + 4 unmapped. `handoff`, `wayfinder` and `writing-great-skills` ship the line upstream, so
+  **19 = 12 locally added + 3 flagged upstream + 4 originals with no upstream**, printed as 15
+  mapped + 4 unmapped. `handoff`, `wayfinder` and `wait-what` ship the line upstream, so
   it is not a local edit there: neither re-add it nor strip it. `code-simplification`,
   `incremental-implementation` and `interview-me` were deliberately promoted back to model-invoked
   and are byte-identical to upstream — an absent flag on those three is the intended state.
@@ -94,6 +94,11 @@ rejects and you have to decide what the edit should become against the rewritten
   `using-git-worktrees`, `finishing-a-development-branch`, `test-driven-development`,
   `verification-before-completion`, `requesting-code-review` and `using-superpowers`, were
   deliberately dropped. Do not vendor them back in to "fix" L3.
+- **`grill-me` and `grill-with-docs` were evaluated and deliberately not vendored.** Both are
+  routers, not skills: `grill-me`'s whole body is `Call the Skill tool with "grilling"` — a pure
+  alias of the already-vendored `grilling` — and `grill-with-docs` dispatches to `grilling` and
+  `domain-modeling`, which is not vendored, so half its dispatch would dangle. Do not vendor them
+  back in for symmetry.
 - **The three `build-mcp-*` skills are one unit — never re-vendor a subset.** They cross-reference
   each other with sibling-relative paths (`../build-mcp-server/references/elicitation.md` in
   `build-mcp-app/SKILL.md`). That path resolves only while all three sit as siblings under
