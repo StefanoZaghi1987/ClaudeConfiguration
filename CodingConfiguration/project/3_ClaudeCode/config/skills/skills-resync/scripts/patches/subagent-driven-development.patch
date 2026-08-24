@@ -177,7 +177,7 @@ diff -ruN --strip-trailing-cr a/code-reviewer.md b/code-reviewer.md
 diff -ruN --strip-trailing-cr a/SKILL.md b/SKILL.md
 --- a/SKILL.md
 +++ b/SKILL.md
-@@ -71,10 +71,10 @@
+@@ -85,10 +85,10 @@
  
      "Setup: worktree, ledger check, read plan, pre-flight review" [shape=box];
      "More tasks remain?" [shape=diamond];
@@ -190,7 +190,7 @@ diff -ruN --strip-trailing-cr a/SKILL.md b/SKILL.md
  
      "Setup: worktree, ledger check, read plan, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
      "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
-@@ -100,17 +100,17 @@
+@@ -114,17 +114,17 @@
      "Park findings in ledger with rulings" -> "Append completion to ledger, mark todo complete";
      "Append completion to ledger, mark todo complete" -> "More tasks remain?";
      "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
@@ -213,7 +213,7 @@ diff -ruN --strip-trailing-cr a/SKILL.md b/SKILL.md
  Never start implementation on a main/master branch without your human
  partner's explicit consent.
  
-@@ -396,8 +396,7 @@
+@@ -450,8 +450,7 @@
  printed path in the final review dispatch, so the final reviewer reads
  one file instead of re-deriving the branch diff with git commands. Dispatch
  on the most capable available model (see Model Selection), using
@@ -223,7 +223,7 @@ diff -ruN --strip-trailing-cr a/SKILL.md b/SKILL.md
  the ledger's deferred-minor and parked lines so it can triage which must be
  fixed before merge.
  
-@@ -420,7 +419,8 @@
+@@ -484,7 +483,8 @@
  the record now. Sibling directories belong to other plans; leave them
  alone.
  
@@ -233,7 +233,7 @@ diff -ruN --strip-trailing-cr a/SKILL.md b/SKILL.md
  
  ## Common Rationalizations
  
-@@ -499,5 +499,5 @@
+@@ -564,5 +564,5 @@
  
  [Delete this plan's workspace — the record now lives in git]
  
