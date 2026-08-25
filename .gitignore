@@ -1,1 +1,16 @@
+# OS
 .DS_Store
+Thumbs.db
+
+# Dependencies & build output
+node_modules/
+dist/
+build/
+
+# Logs & temp
+*.log
+*.tmp
+
+# Editors
+.idea/
+.vscode/
