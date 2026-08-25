@@ -1,5 +1,7 @@
 # Claude Configuration
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 **Prompt-generated best-practices knowledge bases for Claude** — universal coding standards, CLAUDE.md / Claude Code configuration, and Claude Code agents guidance, with the full prompt lineage included so every document can be audited, regenerated, or adapted.
 
 Each knowledge base in this repository was built through a documented two-stage prompt workflow and is packaged twice: as readable markdown for browsing, and as an upload-ready bundle for a [claude.ai Project](https://claude.ai/projects). Nothing here executes; the repo is pure reference material — roughly 57,000 lines of curated guidance.
@@ -34,13 +36,13 @@ All three packages share the same layout:
 Two things are deliberate, not accidental:
 
 - **`docs/` duplicates `project/` markdown.** `docs/` exists for reading and linking; `project/` is the exact bundle to upload into a claude.ai Project. PDFs live only under `project/`, as generated artifacts.
-- **Every document ships with its prompt lineage.** Each generation used two stages: a numbered `N_Write…Prompt.txt` meta-prompt asking Claude to author the best possible generation prompt, and the resulting `N_Generate….md` prompt that produced the documents as downloadable artifacts.
+- **Every document ships with its prompt lineage.** Each generation used two stages, preserved as numbered pairs: the odd-numbered `N_Write…Prompt.txt` — the short human request for the best possible generation prompt — and the even-numbered `N_Generate….md` — the expanded prompt actually fed to Claude, which produced the documents as downloadable artifacts.
 
 ## How to use
 
 1. **Read** — browse any [`*/docs/`](#what-s-inside) markdown directly on GitHub.
 2. **Upload as a Claude Project** — create a project on claude.ai and add the files from `<Package>/project/1_config/` and `<Package>/project/2_knowledge/` (skip the `prompts/` subfolders).
-3. **Regenerate or adapt** — take the generation prompts from any `prompts/` folder, adjust scope or emphasis, and produce your own version of a knowledge base with the same rigor.
+3. **Regenerate or adapt** — take a generation prompt from any `prompts/` folder, adjust the seed config in `1_config/`, and produce your own knowledge base for a new domain with the same rigor.
 
 ## Repository layout
 
